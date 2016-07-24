@@ -15,6 +15,7 @@
 #include <WiFiUdp.h>
 #include <ESP8266SSDP.h>
 #include <NeoPixelBus.h> // NeoPixelAnimator branch
+#include <NeoPixelAnimator.h> // NeoPixelAnimator branch
 #include <aJSON.h> // Replace avm/pgmspace.h with pgmspace.h there and set #define PRINT_BUFFER_LEN 4096 ################# IMPORTANT
 #include "xy.h"
 #include <math.h>
@@ -34,7 +35,9 @@ RgbColor white = RgbColor(colorSaturation);
 RgbColor black = RgbColor(0);
 unsigned int transitionTime = 800; // by default there is a transition time to the new state of 400 milliseconds
 
-NeoPixelAnimator animator(pixelCount); // NeoPixel animation management object
+NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> strip(pixelCount, pixelPin);
+
+NeoPixelAnimator animator(pixelCount, NEO_DECISECONDS); // NeoPixel animation management object
 
 RgbColor StripRgbColors[pixelCount]; // Holds all colors of the pixels on the strip even if they are off
 bool StripLightIsOn[pixelCount]; // Holds on/off information for all the pixels
@@ -293,7 +296,7 @@ void loop() {
   static unsigned long update_strip_time = 0;  //  keeps track of pixel refresh rate... limits updates to 33 Hz
   if (millis() - update_strip_time > 30)
   {
-    if ( animator.IsAnimating() ) animator.UpdateAnimations(100);
+    if ( animator.IsAnimating() ) animator.UpdateAnimations();
     strip.Show();
     update_strip_time = millis();
   }
