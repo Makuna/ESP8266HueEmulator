@@ -37,7 +37,7 @@ unsigned int transitionTime = 800; // by default there is a transition time to t
 
 NeoPixelBus<NeoGrbFeature, NeoEsp8266Uart800KbpsMethod> strip(pixelCount, pixelPin);
 
-NeoPixelAnimator animator(pixelCount, NEO_DECISECONDS); // NeoPixel animation management object
+NeoPixelAnimator animator(pixelCount, NEO_MILLISECONDS); // NeoPixel animation management object
 
 RgbColor StripRgbColors[pixelCount]; // Holds all colors of the pixels on the strip even if they are off
 bool StripLightIsOn[pixelCount]; // Holds on/off information for all the pixels
