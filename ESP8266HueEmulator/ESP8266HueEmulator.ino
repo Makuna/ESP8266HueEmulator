@@ -15,6 +15,7 @@
 #include <WiFiUdp.h>
 #include <ESP8266SSDP.h>
 #include <NeoPixelBus.h> // NeoPixelAnimator branch
+#include <NeoPixelAnimator.h> // NeoPixelAnimator branch
 #include <aJSON.h> // Replace avm/pgmspace.h with pgmspace.h there and set #define PRINT_BUFFER_LEN 4096 ################# IMPORTANT
 #include "xy.h"
 #include <math.h>
@@ -24,7 +25,7 @@
 //const char* password = "********";
 
 // Settings for the NeoPixels
-#define pixelCount 30 // Strip has 30 NeoPixels
+#define pixelCount 6 // Max number of exposed lights is directly related to aJSON PRINT_BUFFER_LEN, 14 for 4096
 #define pixelPin 2 // Strip is attached to GPIO2 on ESP-01
 #define colorSaturation 254
 RgbColor red = RgbColor(colorSaturation, 0, 0);
@@ -34,8 +35,9 @@ RgbColor white = RgbColor(colorSaturation);
 RgbColor black = RgbColor(0);
 unsigned int transitionTime = 800; // by default there is a transition time to the new state of 400 milliseconds
 
-NeoPixelBus strip = NeoPixelBus(pixelCount, pixelPin);
-NeoPixelAnimator animator(&strip); // NeoPixel animation management object
+NeoPixelBus<NeoGrbFeature, NeoEsp8266Uart800KbpsMethod> strip(pixelCount, pixelPin);
+
+NeoPixelAnimator animator(pixelCount, NEO_MILLISECONDS); // NeoPixel animation management object
 
 RgbColor StripRgbColors[pixelCount]; // Holds all colors of the pixels on the strip even if they are off
 bool StripLightIsOn[pixelCount]; // Holds on/off information for all the pixels
@@ -95,7 +97,7 @@ void handleAllOthers() {
     addConfigJson(config);
     aJsonObject *lights;
     aJson.addItemToObject(root, "lights", lights = aJson.createObject());
-    for (int i = 1; i <= 8; i++) // FIXME: Why does this not work for more than 8?
+    for (int i = 1; i <= pixelCount; i++)
       addLightJson(lights, i, StripRgbColors[i-1]);
     aJsonObject *schedules;
     aJson.addItemToObject(root, "schedules", schedules = aJson.createObject());
@@ -128,71 +130,95 @@ void handleAllOthers() {
     }
     Serial.println(HTTP.arg("plain"));
     int numberOfTheLight = atoi(subStr(requestedUri.c_str(), "/", 4)) - 1; // The number of the light to be switched; they start with 1
+    if (numberOfTheLight == -1) {
+      numberOfTheLight = atoi(subStr(requestedUri.c_str(), "/", 3)) - 1;
+    }
     Serial.print("Number of the light --> ");
     Serial.println(numberOfTheLight);
     aJsonObject* parsedRoot = aJson.parse(( char*) HTTP.arg("plain").c_str());
-    aJsonObject* onState = aJson.getObjectItem(parsedRoot, "on");
-    bool onValue = onState->valuebool;
-
-    // The client app uses xy, ct, and hue, sat interchangeably.
-    // If multiple ones are submitted at once, the following convention is used: xy beats ct beats hue/sat
-    // TODO: Implement this
-
-    // Get values from the saved state in case the request does not send new ones
-    HsbColor savedHsb = HsbColor(StripRgbColors[numberOfTheLight]);
-    Serial.println("Retrieved saved HSB");
-    Serial.print("H=");
-    Serial.println(savedHsb.H);
-    Serial.print("S=");
-    Serial.println(savedHsb.S);
-    Serial.print("B=");
-    Serial.println(savedHsb.B);
-
-    int hue = floor(savedHsb.H * 182.04 * 360.0);
-    int sat = floor(savedHsb.S * 254);
-    int bri = floor(savedHsb.B * 254);
-
-    // Read hue, sat, bri from pixel if available
-    if (aJsonObject* hueState = aJson.getObjectItem(parsedRoot, "hue"))
-      hue = hueState->valueint;
-    if (aJsonObject* satState = aJson.getObjectItem(parsedRoot, "sat"))
-      sat = satState->valueint;
-    if (aJsonObject* briState = aJson.getObjectItem(parsedRoot, "bri"))
-      bri = briState->valueint;
-
     RgbColor rgb;
-    rgb = hsb2rgb(hue, sat, bri);
+    // get the current state
+    rgb = StripRgbColors[numberOfTheLight];
+    if (parsedRoot) {
+      // The client app uses xy, ct, and hue, sat interchangeably.
+      // If multiple ones are submitted at once, the following convention is used: xy beats ct beats hue/sat
+      // TODO: Implement this
 
-    // Set values in the saved state
-    StripRgbColors[numberOfTheLight] = rgb;
+      // Get values from the saved state in case the request does not send new ones
+      HsbColor savedHsb = HsbColor(StripRgbColors[numberOfTheLight]);
+      Serial.println("Retrieved saved HSB");
+      Serial.print("H=");
+      Serial.println(savedHsb.H);
+      Serial.print("S=");
+      Serial.println(savedHsb.S);
+      Serial.print("B=");
+      Serial.println(savedHsb.B);
 
-    aJson.deleteItem(parsedRoot);
-    Serial.print("I should --> ");
-    Serial.println(onValue);
+      aJsonObject* onState = aJson.getObjectItem(parsedRoot, "on");
+      bool onValue = false;
+      if (onState) {
+        onValue = onState->valuebool;
+      }
 
-    // define the effect to apply, in this case linear blend
-    HslColor originalColor = strip.GetPixelColor(numberOfTheLight); // FIXME: In lambda function: error: 'originalColor' was not declared in this scope - potential reason for crashes?
-    if (onValue == true)
-    {
-      AnimUpdateCallback animUpdate = [ = ](float progress)
+      // Read hue, sat, bri from pixel if available
+      aJsonObject* hueState = aJson.getObjectItem(parsedRoot, "hue");
+      aJsonObject* satState = aJson.getObjectItem(parsedRoot, "sat");
+      aJsonObject* briState = aJson.getObjectItem(parsedRoot, "bri");
+      if (hueState || satState || briState) {
+        int hue, sat, bri;
+        if (hueState) {
+          hue = hueState->valueint;
+        } else {
+          hue = floor(savedHsb.H * 182.04 * 360.0);
+        }
+        if (satState) {
+          sat = satState->valueint;
+        } else {
+          sat = floor(savedHsb.S * 254);
+        }
+        if (briState) {
+          bri = briState->valueint;
+        } else {
+          bri = floor(savedHsb.B * 254);
+        }
+
+        rgb = hsb2rgb(hue, sat, bri);
+        // Set values in the saved state
+        StripRgbColors[numberOfTheLight] = rgb;
+
+        if (!onState && bri) {
+          onValue = true;
+        }
+      }
+
+      aJson.deleteItem(parsedRoot);
+      Serial.print("I should --> ");
+      Serial.println(onValue);
+
+      // define the effect to apply, in this case linear blend
+      HslColor originalColor = strip.GetPixelColor(numberOfTheLight); // FIXME: In lambda function: error: 'originalColor' was not declared in this scope - potential reason for crashes?
+      if (onValue == true)
       {
-        // progress will start at 0.0 and end at 1.0
-        HslColor updatedColor = HslColor::LinearBlend(originalColor, rgb, progress);
-        strip.SetPixelColor(numberOfTheLight, updatedColor);
-        StripLightIsOn[numberOfTheLight] = true; // Keep track of on/off state
-      };
-      animator.StartAnimation(numberOfTheLight, transitionTime, animUpdate);
-    }
-    else
-    {
-      AnimUpdateCallback animUpdate = [ = ](float progress)
+        AnimUpdateCallback animUpdate = [ = ](const AnimationParam & param)
+        {
+          // progress will start at 0.0 and end at 1.0
+          HslColor updatedColor = HslColor::LinearBlend<NeoHueBlendShortestDistance>(originalColor, rgb, param.progress);
+          strip.SetPixelColor(numberOfTheLight, updatedColor);
+          StripLightIsOn[numberOfTheLight] = true; // Keep track of on/off state
+        };
+        animator.StartAnimation(numberOfTheLight, transitionTime, animUpdate);
+      }
+      else
       {
-        // progress will start at 0.0 and end at 1.0
-        HslColor updatedColor = HslColor::LinearBlend(originalColor, black, progress);
-        strip.SetPixelColor(numberOfTheLight, updatedColor);
-        StripLightIsOn[numberOfTheLight] = false; // Keep track of on/off state
-      };
-      animator.StartAnimation(numberOfTheLight, transitionTime, animUpdate);
+        AnimUpdateCallback animUpdate = [ = ](const AnimationParam & param)
+        {
+          // progress will start at 0.0 and end at 1.0
+          HslColor updatedColor = HslColor::LinearBlend<NeoHueBlendShortestDistance>(originalColor, black, param.progress);
+          strip.SetPixelColor(numberOfTheLight, updatedColor);
+          StripLightIsOn[numberOfTheLight] = false; // Keep track of on/off state
+        };
+        animator.StartAnimation(numberOfTheLight, transitionTime, animUpdate);
+      }
     }
 
     aJsonObject *root;
@@ -267,11 +293,12 @@ void setup() {
   SSDP.setName((char*)"Philips hue clone");
   SSDP.setSerialNumber((char*)"001788102201");
   SSDP.setURL((char*)"index.html");
-  SSDP.setModelName((char*)"Philips hue bridge 2012");
-  SSDP.setModelNumber((char*)"929000226503");
+  SSDP.setModelName((char*)"IpBridge");
+  SSDP.setModelNumber((char*)"0.1");
   SSDP.setModelURL((char*)"http://www.meethue.com");
   SSDP.setManufacturer((char*)"Royal Philips Electronics");
   SSDP.setManufacturerURL((char*)"http://www.philips.com");
+  SSDP.setDeviceType((char*)"upnp:rootdevice");
   Serial.println("SSDP Started");
 
   // Initialize all pixels to white
@@ -294,7 +321,7 @@ void loop() {
   static unsigned long update_strip_time = 0;  //  keeps track of pixel refresh rate... limits updates to 33 Hz
   if (millis() - update_strip_time > 30)
   {
-    if ( animator.IsAnimating() ) animator.UpdateAnimations(100);
+    if ( animator.IsAnimating() ) animator.UpdateAnimations();
     strip.Show();
     update_strip_time = millis();
   }
